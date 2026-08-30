@@ -579,6 +579,15 @@
       <i class="fa-solid fa-clock"></i><span id="callTimerText">0:00</span>
     </div>
 
+    <!-- Partner's name + one-tap "add as friend" -->
+    <div id="partnerNameChip" class="status-badge" style="gap:0.5rem;" hidden>
+      <span id="partnerNameText" class="font-semibold">—</span>
+      <button id="partnerAddFriendBtn" onclick="addFriendFromCall()" title="Add as friend"
+        style="width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,var(--accent),var(--rose-deep));border:none;color:white;font-size:0.7rem;cursor:pointer;flex-shrink:0;">
+        <i class="fa-solid fa-plus"></i>
+      </button>
+    </div>
+
     <div id="statusBadge" class="status-badge">
       <span class="status-dot idle"></span><span id="statusBadgeText">Idle</span>
     </div>
@@ -697,26 +706,18 @@
       <button onclick="showScreen('landing')" class="media-btn" style="width:40px;height:40px;background:rgba(255,255,255,0.06)">
         <i class="fa-solid fa-arrow-left"></i>
       </button>
-      <h1 class="font-display text-2xl font-semibold">Friends</h1>
+      <h1 class="font-display text-2xl font-semibold flex-1">Friends</h1>
+      <button onclick="openAddFriendModal()" class="w-11 h-11 rounded-full flex items-center justify-center flex-shrink-0" style="background:linear-gradient(135deg, var(--accent), var(--rose-deep)); box-shadow:0 10px 26px -8px rgba(225,29,72,0.6);" title="Add a friend">
+        <i class="fa-solid fa-plus text-lg text-white"></i>
+      </button>
     </div>
 
-    <!-- your own code, so friends can add you -->
-    <div class="glass rounded-2xl p-4 mb-4 flex items-center justify-between gap-3">
-      <div class="min-w-0">
-        <div class="text-[10px] font-bold uppercase tracking-wider" style="color:var(--ink-faint)">Your friend code</div>
-        <div id="myFriendCode" class="font-display text-lg font-semibold truncate">—</div>
-      </div>
-      <button onclick="copyFriendCode()" class="btn btn-ghost py-2 px-3 flex-shrink-0"><i class="fa-regular fa-copy"></i></button>
-    </div>
-
-    <button onclick="openAddFriendModal()" class="btn btn-primary w-full py-3 mb-4">
-      <i class="fa-solid fa-user-plus"></i> Add a friend
-    </button>
+    <p class="text-xs text-center mb-4" style="color:var(--ink-faint)">Your username is <span class="font-semibold" style="color:var(--ink)" id="myFriendCode">—</span> — that's what friends type in to add you.</p>
 
     <div class="glass rounded-2xl p-3">
       <h4 class="text-xs font-bold uppercase tracking-wider mb-2 px-1" style="color:var(--ink-faint)">Your friends</h4>
       <div id="friendsList" class="flex flex-col gap-2"></div>
-      <p id="friendsEmptyState" class="text-sm text-center py-6" style="color:var(--ink-faint)">No friends yet — add one with their friend code to start chatting.</p>
+      <p id="friendsEmptyState" class="text-sm text-center py-6" style="color:var(--ink-faint)">No friends yet — tap + and enter their name to start chatting.</p>
     </div>
   </div>
 </main>
@@ -1922,7 +1923,7 @@ function setupDataConnection(conn){
   dataConnection = conn;
   conn.on('open', () => {
     addSystemLog('Connected 💕 — say hello!');
-    sendData({ type:'status', mic: micEnabled, cam: camEnabled });
+    sendData({ type:'status', mic: micEnabled, cam: camEnabled, name: userProfile.nickname, friendCode: ensureFriendCode() });
   });
   conn.on('data', (raw) => handleIncomingData(raw));
 }
@@ -1930,6 +1931,9 @@ function setupDataConnection(conn){
 function sendData(payload){
   if (dataConnection && dataConnection.open){ dataConnection.send(payload); }
 }
+
+let partnerName = null;
+let partnerFriendCode = null;
 
 function handleIncomingData(data){
   if (!data || !data.type) return;
@@ -1946,6 +1950,39 @@ function handleIncomingData(data){
     if (data.emoji === '❤️' || data.emoji === '💖') triggerHeartAnimation();
     notifyIncomingMessage(`Sent ${data.emoji}`, 'fa-heart');
   }
+  if (data.type === 'status' && data.name && data.friendCode){
+    partnerName = data.name;
+    partnerFriendCode = data.friendCode;
+    $('partnerNameText').textContent = partnerName;
+    $('partnerNameChip').hidden = false;
+    updatePartnerAddFriendBtn();
+  }
+}
+
+function updatePartnerAddFriendBtn(){
+  const btn = $('partnerAddFriendBtn');
+  const alreadyFriend = partnerFriendCode && friends.some(f => f.code === partnerFriendCode);
+  if (alreadyFriend){
+    btn.innerHTML = '<i class="fa-solid fa-check"></i>';
+    btn.style.opacity = '0.6';
+    btn.style.cursor = 'default';
+    btn.onclick = null;
+  } else {
+    btn.innerHTML = '<i class="fa-solid fa-plus"></i>';
+    btn.style.opacity = '1';
+    btn.style.cursor = 'pointer';
+    btn.onclick = addFriendFromCall;
+  }
+}
+
+/* One tap, right next to the partner's name — no code to copy or paste. */
+function addFriendFromCall(){
+  if (!partnerName || !partnerFriendCode) return;
+  if (friends.some(f => f.code === partnerFriendCode)){ updatePartnerAddFriendBtn(); return; }
+  friends.push({ code: partnerFriendCode, name: partnerName });
+  saveFriends();
+  updatePartnerAddFriendBtn();
+  showToast(`${partnerName} added as a friend!`, 'success');
 }
 
 /* ============================================================
@@ -2138,6 +2175,8 @@ function endCall(){
   if (dataConnection){ try{ dataConnection.close(); }catch(e){} }
   if (peer){ try{ peer.destroy(); }catch(e){} }
   peer = null; mediaConnection = null; dataConnection = null;
+  partnerName = null; partnerFriendCode = null;
+  $('partnerNameChip').hidden = true;
 
   if (localStream) localStream.getTracks().forEach(t => t.stop());
   localStream = null;
